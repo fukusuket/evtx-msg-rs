@@ -134,18 +134,18 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
 fn dump_raw_eventdata_structure() {
     use evtx::EvtxParser;
 
-    let mut parser = EvtxParser::from_path(SYSTEM_LOG).expect("open System.evtx");
-    println!("\n=== Raw EventData JSON (first 10 records) ===");
-    let mut count = 0;
-    for record in parser.records_json() {
-        if count >= 10 { break; }
-        match record {
-            Ok(r) => {
-                // Extract just the EventData / UserData portion for readability.
+    for (label, path) in [(SYSTEM_LOG, "System.evtx"), (APPLICATION_LOG, "Application.evtx")] {
+        let mut parser = EvtxParser::from_path(label).expect("open evtx");
+        println!("\n=== Raw EventData JSON — {path} (first 10 records) ===");
+        let mut count = 0;
+        for record in parser.records_json() {
+            if count >= 10 { break; }
+            if let Ok(r) = record {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.data) {
-                    let event_data = v.get("Event")
+                    let event = v.get("Event");
+                    let event_data = event
                         .and_then(|e| e.get("EventData").or_else(|| e.get("UserData")));
-                    let event_id = v.get("Event")
+                    let event_id = event
                         .and_then(|e| e.get("System"))
                         .and_then(|s| s.get("EventID"))
                         .and_then(|id| id.as_u64().or_else(|| {
@@ -159,7 +159,34 @@ fn dump_raw_eventdata_structure() {
                 }
                 count += 1;
             }
-            Err(e) => eprintln!("  record error: {e}"),
+        }
+    }
+
+    // Also dump docker events specifically (they have unresolved %2)
+    println!("\n=== Application.evtx — docker event 11 (first 2) ===");
+    let mut parser = evtx::EvtxParser::from_path(APPLICATION_LOG).expect("open Application.evtx");
+    let mut count = 0;
+    for record in parser.records_json() {
+        if count >= 2 { break; }
+        if let Ok(r) = record {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.data) {
+                let is_docker_11 = v.get("Event")
+                    .and_then(|e| e.get("System"))
+                    .and_then(|s| s.get("EventID"))
+                    .and_then(|id| id.as_u64().or_else(|| id.get("#text").and_then(|t| t.as_u64())))
+                    == Some(11)
+                    && v.get("Event")
+                        .and_then(|e| e.get("System"))
+                        .and_then(|s| s.get("Provider"))
+                        .and_then(|p| p.get("#attributes"))
+                        .and_then(|a| a.get("Name"))
+                        .and_then(|n| n.as_str())
+                        == Some("docker");
+                if is_docker_11 {
+                    println!("  full JSON: {}", serde_json::to_string(&v).unwrap_or_default());
+                    count += 1;
+                }
+            }
         }
     }
 }
