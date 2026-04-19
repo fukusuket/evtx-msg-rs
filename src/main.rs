@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use parser::records_from_path;
-use resolver::{ChainedResolver, MessageResolver, NullResolver};
+use resolver::{ChainedResolver, MessageResolver};
+#[cfg(not(windows))]
+use resolver::NullResolver;
 
 fn main() -> anyhow::Result<()> {
     let path: PathBuf = std::env::args_os()
