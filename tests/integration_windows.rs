@@ -129,6 +129,41 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
     }
 }
 
+/// Dump raw evtx JSON for the first few records to diagnose EventData structure.
+#[test]
+fn dump_raw_eventdata_structure() {
+    use evtx::EvtxParser;
+
+    let mut parser = EvtxParser::from_path(SYSTEM_LOG).expect("open System.evtx");
+    println!("\n=== Raw EventData JSON (first 10 records) ===");
+    let mut count = 0;
+    for record in parser.records_json() {
+        if count >= 10 { break; }
+        match record {
+            Ok(r) => {
+                // Extract just the EventData / UserData portion for readability.
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.data) {
+                    let event_data = v.get("Event")
+                        .and_then(|e| e.get("EventData").or_else(|| e.get("UserData")));
+                    let event_id = v.get("Event")
+                        .and_then(|e| e.get("System"))
+                        .and_then(|s| s.get("EventID"))
+                        .and_then(|id| id.as_u64().or_else(|| {
+                            id.get("#text").and_then(|t| t.as_u64())
+                        }))
+                        .unwrap_or(0);
+                    println!(
+                        "  EventID={event_id}  EventData={}",
+                        serde_json::to_string(&event_data).unwrap_or_default()
+                    );
+                }
+                count += 1;
+            }
+            Err(e) => eprintln!("  record error: {e}"),
+        }
+    }
+}
+
 #[test]
 fn system_log_produces_valid_json() {
     let lines = run_binary(SYSTEM_LOG);

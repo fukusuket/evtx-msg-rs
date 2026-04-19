@@ -74,6 +74,9 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
+      - name: Diagnose EventData structure (raw evtx JSON dump)
+        run: cargo test --test integration_windows dump_raw_eventdata_structure -- --nocapture
+
       - name: Integration tests (requires Windows registry + system logs)
         # CARGO_BIN_EXE_evtx-msg-rs is set automatically by Cargo for integration tests.
         # The Windows Event Log service must be running (default on windows-latest).
