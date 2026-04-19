@@ -68,6 +68,7 @@ fn assert_some_resolved(lines: &[String]) {
 }
 
 /// Print a summary: total records, resolved count, and up to `n` resolved samples.
+/// Also warns about records whose message still contains unresolved `%N` placeholders.
 fn print_summary(label: &str, lines: &[String], n: usize) {
     let total = lines.len();
     let resolved: Vec<serde_json::Value> = lines
@@ -78,17 +79,50 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
         })
         .collect();
 
+    // Detect messages that still contain %1..%99 placeholders.
+    let placeholder_re = |s: &str| -> bool {
+        let b = s.as_bytes();
+        let mut i = 0;
+        while i + 1 < b.len() {
+            if b[i] == b'%' && b[i + 1].is_ascii_digit() && b[i + 1] != b'0' {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    };
+    let unresolved_placeholders: Vec<&serde_json::Value> = resolved
+        .iter()
+        .filter(|v| {
+            v["message"]
+                .as_str()
+                .map(placeholder_re)
+                .unwrap_or(false)
+        })
+        .collect();
+
     println!(
-        "\n=== {label} ===\n  total records : {total}\n  resolved      : {}",
-        resolved.len()
+        "\n=== {label} ===\n  total records       : {total}\n  resolved            : {}\n  still has %N        : {}",
+        resolved.len(),
+        unresolved_placeholders.len(),
     );
+
+    if !unresolved_placeholders.is_empty() {
+        println!("  --- records with unresolved placeholders (first 3) ---");
+        for v in unresolved_placeholders.iter().take(3) {
+            let event_id = v["event_id"].as_u64().unwrap_or(0);
+            let provider = v["provider"].as_str().unwrap_or("");
+            let message = v["message"].as_str().unwrap_or("");
+            let preview: String = message.chars().take(200).collect();
+            println!("  [{event_id}] {provider}\n    {preview}");
+        }
+    }
 
     println!("  --- first {n} resolved messages ---");
     for v in resolved.iter().take(n) {
         let event_id = v["event_id"].as_u64().unwrap_or(0);
         let provider = v["provider"].as_str().unwrap_or("");
         let message = v["message"].as_str().unwrap_or("").replace('\n', "↵").replace('\r', "");
-        // Truncate long messages for readability.
         let preview: String = message.chars().take(120).collect();
         let ellipsis = if message.chars().count() > 120 { "…" } else { "" };
         println!("  [{event_id}] {provider}\n    {preview}{ellipsis}");

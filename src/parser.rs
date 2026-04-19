@@ -68,35 +68,90 @@ pub fn parse_record(json: &str) -> Result<EvtxRecord, ResolveError> {
     Ok(EvtxRecord { provider_name, provider_guid, event_id, params })
 }
 
-/// Extract substitution parameters from `Event.EventData.Data`.
+/// Extract substitution parameters from `Event.EventData.Data` or `Event.UserData`.
 ///
-/// Handles three shapes:
-/// - missing / null → empty list
-/// - single string → one-element list
-/// - array of strings or objects with `"#text"` → ordered list
+/// Handles the following shapes evtx produces:
+/// - `Data` missing / null          → empty list
+/// - `Data` = single string         → one-element list
+/// - `Data` = array of strings      → list of those strings
+/// - `Data` = array of objects      → `"#text"` value (string **or** number) per entry
+/// - `Data` = single object         → one-element list from its `"#text"`
+/// - `UserData` fallback            → depth-first text leaves when `EventData.Data` absent
 fn extract_params(root: &Value) -> Vec<String> {
-    let data = root
-        .get("Event")
-        .and_then(|e| e.get("EventData"))
-        .and_then(|ed| ed.get("Data"));
+    // Primary: EventData.Data
+    let event = root.get("Event");
+    if let Some(data) = event.and_then(|e| e.get("EventData")).and_then(|ed| ed.get("Data")) {
+        let params = collect_data_params(data);
+        if !params.is_empty() {
+            return params;
+        }
+    }
 
+    // Fallback: UserData (Task Scheduler, WMI, etc. use this instead of EventData)
+    if let Some(user_data) = event.and_then(|e| e.get("UserData")) {
+        let params = collect_leaf_texts(user_data);
+        if !params.is_empty() {
+            return params;
+        }
+    }
+
+    vec![]
+}
+
+/// Collect params from an `EventData.Data` value.
+fn collect_data_params(data: &Value) -> Vec<String> {
     match data {
-        None => vec![],
-        Some(Value::Null) => vec![],
-        Some(Value::String(s)) => vec![s.clone()],
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .map(|v| match v {
-                Value::String(s) => s.clone(),
-                Value::Object(_) => v
-                    .get("#text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                _ => v.to_string(),
+        Value::Null => vec![],
+        Value::String(s) => vec![s.clone()],
+        Value::Array(arr) => arr.iter().map(value_to_param).collect(),
+        other => vec![value_to_param(other)],
+    }
+}
+
+/// Extract a single substitution parameter from a JSON value.
+///
+/// Objects produced by evtx look like:
+/// `{"#attributes": {"Name": "LogonType"}, "#text": 3}`
+/// `"#text"` may be a string, number, bool, or absent (null element).
+fn value_to_param(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => String::new(),
+        Value::Object(_) => {
+            // Prefer "#text"; fall back to the whole object serialised.
+            if let Some(text) = v.get("#text") {
+                match text {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                }
+            } else {
+                String::new()
+            }
+        }
+        Value::Array(_) => v.to_string(),
+    }
+}
+
+/// Depth-first collect all leaf string/number values from a JSON tree (UserData fallback).
+fn collect_leaf_texts(v: &Value) -> Vec<String> {
+    match v {
+        Value::String(s) => vec![s.clone()],
+        Value::Number(n) => vec![n.to_string()],
+        Value::Bool(b) => vec![b.to_string()],
+        Value::Array(arr) => arr.iter().flat_map(collect_leaf_texts).collect(),
+        Value::Object(map) => map
+            .values()
+            .flat_map(|child| {
+                // Skip "#attributes" metadata — it holds names, not values.
+                collect_leaf_texts(child)
             })
             .collect(),
-        Some(other) => vec![other.to_string()],
+        Value::Null => vec![],
     }
 }
 
@@ -186,6 +241,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_data_numeric_text() {
+        // evtx produces #text as a JSON number (e.g. LogonType: 3).
+        let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":4624},\"EventData\":{\"Data\":[{\"#attributes\":{\"Name\":\"LogonType\"},\"#text\":3}]}}}";
+        let rec = parse_record(json).unwrap();
+        assert_eq!(rec.params, vec!["3"]);
+    }
+
+    #[test]
+    fn parse_data_object_with_text_string() {
+        // Named Data entries where #text is a string.
+        let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":7036},\"EventData\":{\"Data\":[{\"#attributes\":{\"Name\":\"param1\"},\"#text\":\"Spooler\"},{\"#attributes\":{\"Name\":\"param2\"},\"#text\":\"running\"}]}}}";
+        let rec = parse_record(json).unwrap();
+        assert_eq!(rec.params, vec!["Spooler", "running"]);
+    }
+
+    #[test]
+    fn parse_data_object_no_text_returns_empty_string() {
+        // Object with only #attributes and no #text → empty param string.
+        let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":1},\"EventData\":{\"Data\":[{\"#attributes\":{\"Name\":\"x\"}}]}}}";
+        let rec = parse_record(json).unwrap();
+        assert_eq!(rec.params, vec![""]);
+    }
+
+    #[test]
     fn parse_missing_system_returns_error() {
         let json = r#"{"Event": {}}"#;
         assert!(parse_record(json).is_err());
@@ -199,9 +278,3 @@ mod tests {
         assert_eq!(rec.event_id, 4625);
     }
 }
-
-
-
-
-
-
