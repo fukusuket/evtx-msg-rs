@@ -68,18 +68,27 @@ pub fn parse_record(json: &str) -> Result<EvtxRecord, ResolveError> {
     Ok(EvtxRecord { provider_name, provider_guid, event_id, params })
 }
 
-/// Extract substitution parameters from `Event.EventData.Data` or `Event.UserData`.
+/// Extract substitution parameters from `Event.EventData` or `Event.UserData`.
 ///
-/// Handles the following shapes evtx produces:
-/// - `Data` missing / null          → empty list
-/// - `Data` = single string         → one-element list
-/// - `Data` = array of strings      → list of those strings
-/// - `Data` = array of objects      → `"#text"` value (string **or** number) per entry
-/// - `Data` = single object         → one-element list from its `"#text"`
-/// - `UserData` fallback            → depth-first text leaves when `EventData.Data` absent
+/// evtx produces three distinct `EventData` shapes (plus `UserData`):
+///
+/// 1. **`Data` array** – manifested events with `<Data Name="...">value</Data>`:
+///    `{"Data": [{"#attributes":{"Name":"p1"}, "#text":"v1"}, ...]}`
+///    or unnamed: `{"Data": ["v1", "v2"]}`
+///
+/// 2. **Flat EventData** – classic/ETW events where parameters are direct children:
+///    `{"param1":"v1", "param2":"v2", "Binary":"..."}` (most System/Application events)
+///    `{"#attributes":{...}, "Field1":0, "Field2":0}` (#attributes holds metadata only)
+///
+/// 3. **UserData** – Task Scheduler and similar providers:
+///    `{"ElementName": {"#attributes":{...}, "Field1":"v1", "Field2":"v2"}}`
+///
+/// Parameters are collected in JSON document order, which the evtx crate preserves
+/// (it enables serde_json's `preserve_order` feature).
 fn extract_params(root: &Value) -> Vec<String> {
-    // Primary: EventData.Data
     let event = root.get("Event");
+
+    // ── Shape 1: EventData.Data (array or single object/string) ─────────────
     if let Some(data) = event.and_then(|e| e.get("EventData")).and_then(|ed| ed.get("Data")) {
         let params = collect_data_params(data);
         if !params.is_empty() {
@@ -87,47 +96,58 @@ fn extract_params(root: &Value) -> Vec<String> {
         }
     }
 
-    // Fallback: UserData (Task Scheduler, WMI, etc. use this instead of EventData)
-    if let Some(user_data) = event.and_then(|e| e.get("UserData")) {
-        let params = collect_leaf_texts(user_data);
+    // ── Shape 2: Flat EventData ──────────────────────────────────────────────
+    if let Some(Value::Object(map)) = event.and_then(|e| e.get("EventData")) {
+        let params: Vec<String> = map
+            .iter()
+            .filter(|(k, _)| k.as_str() != "#attributes" && k.as_str() != "Data")
+            .map(|(_, v)| scalar_to_param(v))
+            .collect();
         if !params.is_empty() {
             return params;
+        }
+    }
+
+    // ── Shape 3: UserData ────────────────────────────────────────────────────
+    // UserData has one named child whose direct (non-`#attributes`) children are params.
+    if let Some(Value::Object(ud_map)) = event.and_then(|e| e.get("UserData")) {
+        for (_, child) in ud_map.iter() {
+            if let Value::Object(child_map) = child {
+                let params: Vec<String> = child_map
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "#attributes")
+                    .map(|(_, v)| scalar_to_param(v))
+                    .collect();
+                if !params.is_empty() {
+                    return params;
+                }
+            }
         }
     }
 
     vec![]
 }
 
-/// Collect params from an `EventData.Data` value.
-fn collect_data_params(data: &Value) -> Vec<String> {
-    match data {
-        Value::Null => vec![],
-        Value::String(s) => vec![s.clone()],
-        Value::Array(arr) => arr.iter().map(value_to_param).collect(),
-        other => vec![value_to_param(other)],
-    }
-}
-
-/// Extract a single substitution parameter from a JSON value.
+/// Convert a scalar (or `{"#text":...}` object) JSON value to a substitution parameter string.
 ///
-/// Objects produced by evtx look like:
-/// `{"#attributes": {"Name": "LogonType"}, "#text": 3}`
-/// `"#text"` may be a string, number, bool, or absent (null element).
-fn value_to_param(v: &Value) -> String {
+/// - String / Number / Bool → their string representation
+/// - Null → empty string (preserves positional slot)
+/// - Object with `"#text"` → the `#text` value converted to string
+/// - Other → empty string
+fn scalar_to_param(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => String::new(),
         Value::Object(_) => {
-            // Prefer "#text"; fall back to the whole object serialised.
+            // {"#attributes":{...}, "#text": "value"} pattern
             if let Some(text) = v.get("#text") {
                 match text {
                     Value::String(s) => s.clone(),
                     Value::Number(n) => n.to_string(),
                     Value::Bool(b) => b.to_string(),
-                    Value::Null => String::new(),
-                    other => other.to_string(),
+                    _ => String::new(),
                 }
             } else {
                 String::new()
@@ -137,21 +157,14 @@ fn value_to_param(v: &Value) -> String {
     }
 }
 
-/// Depth-first collect all leaf string/number values from a JSON tree (UserData fallback).
-fn collect_leaf_texts(v: &Value) -> Vec<String> {
-    match v {
-        Value::String(s) => vec![s.clone()],
-        Value::Number(n) => vec![n.to_string()],
-        Value::Bool(b) => vec![b.to_string()],
-        Value::Array(arr) => arr.iter().flat_map(collect_leaf_texts).collect(),
-        Value::Object(map) => map
-            .values()
-            .flat_map(|child| {
-                // Skip "#attributes" metadata — it holds names, not values.
-                collect_leaf_texts(child)
-            })
-            .collect(),
+
+/// Collect params from an `EventData.Data` value (named `{"#text":...}` objects or plain strings).
+fn collect_data_params(data: &Value) -> Vec<String> {
+    match data {
         Value::Null => vec![],
+        Value::String(s) => vec![s.clone()],
+        Value::Array(arr) => arr.iter().map(scalar_to_param).collect(),
+        other => vec![scalar_to_param(other)],
     }
 }
 
