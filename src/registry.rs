@@ -164,6 +164,7 @@ impl RegistryResolver {
     }
 
     /// Create a resolver with a custom registry provider (useful for testing).
+    #[cfg(test)]
     pub fn with_provider(registry: Box<dyn RegistryProvider>) -> Self {
         Self { registry }
     }

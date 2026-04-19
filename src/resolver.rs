@@ -18,7 +18,8 @@ pub trait MessageResolver {
 
 /// A no-op resolver used as a test stub.
 ///
-/// Always returns `Ok(None)`.
+/// Test stub — always returns Ok(None).
+#[cfg_attr(windows, allow(dead_code))]
 pub struct NullResolver;
 
 impl MessageResolver for NullResolver {
@@ -43,6 +44,7 @@ impl ChainedResolver {
     }
 
     /// Append a resolver to the end of the chain.
+    #[allow(dead_code)]
     pub fn push(&mut self, resolver: Box<dyn MessageResolver>) {
         self.resolvers.push(resolver);
     }
