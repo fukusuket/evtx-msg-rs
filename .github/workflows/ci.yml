@@ -9,7 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ── Unit tests (macOS / Linux, no Windows required) ─────────────────────────
@@ -21,7 +20,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -29,7 +28,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -49,7 +48,7 @@ jobs:
     name: Integration tests (Windows Server)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -57,7 +56,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~\.cargo\registry
@@ -79,6 +78,3 @@ jobs:
         # CARGO_BIN_EXE_evtx-msg-rs is set automatically by Cargo for integration tests.
         # The Windows Event Log service must be running (default on windows-latest).
         run: cargo test --test integration_windows -- --nocapture
-
-
-
