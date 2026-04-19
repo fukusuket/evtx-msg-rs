@@ -1,0 +1,8 @@
+[package]
+name = "evtx-msg-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+evtx = "0.11.2"
+
