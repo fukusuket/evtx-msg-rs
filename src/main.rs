@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use parser::records_from_path;
-use resolver::{ChainedResolver, MessageResolver};
 #[cfg(not(windows))]
 use resolver::NullResolver;
+use resolver::{ChainedResolver, MessageResolver};
 
 fn main() -> anyhow::Result<()> {
     let path: PathBuf = std::env::args_os()
@@ -118,9 +118,7 @@ fn process_file(
 fn build_resolver() -> ChainedResolver {
     #[cfg(windows)]
     {
-        ChainedResolver::new(vec![
-            Box::new(registry::RegistryResolver::new()),
-        ])
+        ChainedResolver::new(vec![Box::new(registry::RegistryResolver::new())])
     }
     #[cfg(not(windows))]
     {

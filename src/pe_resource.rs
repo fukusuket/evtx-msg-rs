@@ -20,18 +20,17 @@ pub fn extract_message(pe_bytes: &[u8], event_id: u32) -> Result<String, Resolve
         .map_err(|e| ResolveError::PeResource(format!("resources: {e}")))?;
 
     // Locate RT_MESSAGETABLE (type 11), first language variant.
-        let raw: &[u8] = resources
-            .find_resource(&[
-                pelite::resources::Name::Id(RT_MESSAGETABLE),
-                pelite::resources::Name::Id(1), // resource name ID (always 1 for msg tables)
-            ])
-            .map_err(|e| match e {
-                FindError::NotFound => {
-                    ResolveError::PeResource("RT_MESSAGETABLE not found".to_string())
-                }
-                other => ResolveError::PeResource(format!("find_resource: {other}")),
-            })?;
-
+    let raw: &[u8] = resources
+        .find_resource(&[
+            pelite::resources::Name::Id(RT_MESSAGETABLE),
+            pelite::resources::Name::Id(1), // resource name ID (always 1 for msg tables)
+        ])
+        .map_err(|e| match e {
+            FindError::NotFound => {
+                ResolveError::PeResource("RT_MESSAGETABLE not found".to_string())
+            }
+            other => ResolveError::PeResource(format!("find_resource: {other}")),
+        })?;
 
     parse_message_table(raw, event_id)
 }
@@ -39,7 +38,9 @@ pub fn extract_message(pe_bytes: &[u8], event_id: u32) -> Result<String, Resolve
 /// Parse a raw `MESSAGE_RESOURCE_DATA` blob and return the text for `event_id`.
 fn parse_message_table(data: &[u8], event_id: u32) -> Result<String, ResolveError> {
     if data.len() < 4 {
-        return Err(ResolveError::PeResource("truncated MESSAGE_RESOURCE_DATA".to_string()));
+        return Err(ResolveError::PeResource(
+            "truncated MESSAGE_RESOURCE_DATA".to_string(),
+        ));
     }
 
     let num_blocks = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
@@ -91,7 +92,9 @@ fn decode_entry(text_bytes: &[u8], flags: u16) -> Result<String, ResolveError> {
     let raw = if flags & 0x0001 != 0 {
         // UTF-16LE
         if !text_bytes.len().is_multiple_of(2) {
-            return Err(ResolveError::PeResource("odd byte count for UTF-16LE".to_string()));
+            return Err(ResolveError::PeResource(
+                "odd byte count for UTF-16LE".to_string(),
+            ));
         }
         let units: Vec<u16> = text_bytes
             .chunks_exact(2)

@@ -24,12 +24,30 @@ pub fn substitute(template: &str, params: &[&str]) -> String {
             continue;
         }
         match rest[0] {
-            b'%' => { out.push('%'); i += 2; }
-            b'n' => { out.push('\r'); out.push('\n'); i += 2; }
-            b'r' => { out.push('\r'); i += 2; }
-            b't' => { out.push('\t'); i += 2; }
-            b'b' => { out.push(' '); i += 2; }
-            b'0' => { return out; }
+            b'%' => {
+                out.push('%');
+                i += 2;
+            }
+            b'n' => {
+                out.push('\r');
+                out.push('\n');
+                i += 2;
+            }
+            b'r' => {
+                out.push('\r');
+                i += 2;
+            }
+            b't' => {
+                out.push('\t');
+                i += 2;
+            }
+            b'b' => {
+                out.push(' ');
+                i += 2;
+            }
+            b'0' => {
+                return out;
+            }
             c if c.is_ascii_digit() && c != b'0' => {
                 let d1 = (c - b'0') as usize;
                 let (idx, advance) = if rest.len() > 1 && rest[1].is_ascii_digit() {
@@ -44,7 +62,10 @@ pub fn substitute(template: &str, params: &[&str]) -> String {
                 }
                 i += advance;
             }
-            _ => { out.push('%'); i += 1; }
+            _ => {
+                out.push('%');
+                i += 1;
+            }
         }
     }
     out
@@ -56,11 +77,17 @@ mod tests {
 
     #[test]
     fn basic_single_param() {
-        assert_eq!(substitute("Service %1 started.", &["Spooler"]), "Service Spooler started.");
+        assert_eq!(
+            substitute("Service %1 started.", &["Spooler"]),
+            "Service Spooler started."
+        );
     }
     #[test]
     fn two_params() {
-        assert_eq!(substitute("Error %1: %2", &["5", "Access denied"]), "Error 5: Access denied");
+        assert_eq!(
+            substitute("Error %1: %2", &["5", "Access denied"]),
+            "Error 5: Access denied"
+        );
     }
     #[test]
     fn percent_literal() {

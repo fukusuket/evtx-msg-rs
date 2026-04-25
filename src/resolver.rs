@@ -83,10 +83,7 @@ mod tests {
 
     #[test]
     fn chained_all_null_returns_none() {
-        let chain = ChainedResolver::new(vec![
-            Box::new(NullResolver),
-            Box::new(NullResolver),
-        ]);
+        let chain = ChainedResolver::new(vec![Box::new(NullResolver), Box::new(NullResolver)]);
         assert_eq!(chain.resolve(&dummy_record()).unwrap(), None);
     }
 
@@ -119,11 +116,7 @@ mod tests {
             }
         }
 
-        let chain = ChainedResolver::new(vec![
-            Box::new(NullResolver),
-            Box::new(ErrResolver),
-        ]);
+        let chain = ChainedResolver::new(vec![Box::new(NullResolver), Box::new(ErrResolver)]);
         assert!(chain.resolve(&dummy_record()).is_err());
     }
 }
-

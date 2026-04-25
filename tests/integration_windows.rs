@@ -38,8 +38,8 @@ fn assert_valid_json_lines(lines: &[String]) {
     assert!(!lines.is_empty(), "expected at least one output line");
 
     for line in lines {
-        let v: serde_json::Value =
-            serde_json::from_str(line).unwrap_or_else(|e| panic!("invalid JSON: {e}\nline: {line}"));
+        let v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("invalid JSON: {e}\nline: {line}"));
 
         assert!(v.get("event_id").is_some(), "missing event_id in: {line}");
         assert!(v.get("provider").is_some(), "missing provider in: {line}");
@@ -74,9 +74,7 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
     let resolved: Vec<serde_json::Value> = lines
         .iter()
         .filter_map(|l| serde_json::from_str(l).ok())
-        .filter(|v: &serde_json::Value| {
-            v.get("message").map(|m| !m.is_null()).unwrap_or(false)
-        })
+        .filter(|v: &serde_json::Value| v.get("message").map(|m| !m.is_null()).unwrap_or(false))
         .collect();
 
     // Detect messages that still contain %1..%99 placeholders.
@@ -93,12 +91,7 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
     };
     let unresolved_placeholders: Vec<&serde_json::Value> = resolved
         .iter()
-        .filter(|v| {
-            v["message"]
-                .as_str()
-                .map(placeholder_re)
-                .unwrap_or(false)
-        })
+        .filter(|v| v["message"].as_str().map(placeholder_re).unwrap_or(false))
         .collect();
 
     println!(
@@ -128,9 +121,17 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
     for v in resolved.iter().take(n) {
         let event_id = v["event_id"].as_u64().unwrap_or(0);
         let provider = v["provider"].as_str().unwrap_or("");
-        let message = v["message"].as_str().unwrap_or("").replace('\n', "↵").replace('\r', "");
+        let message = v["message"]
+            .as_str()
+            .unwrap_or("")
+            .replace('\n', "↵")
+            .replace('\r', "");
         let preview: String = message.chars().take(120).collect();
-        let ellipsis = if message.chars().count() > 120 { "…" } else { "" };
+        let ellipsis = if message.chars().count() > 120 {
+            "…"
+        } else {
+            ""
+        };
         println!("  [{event_id}] {provider}\n    {preview}{ellipsis}");
     }
 }
@@ -140,23 +141,29 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
 fn dump_raw_eventdata_structure() {
     use evtx::EvtxParser;
 
-    for (label, path) in [(SYSTEM_LOG, "System.evtx"), (APPLICATION_LOG, "Application.evtx")] {
+    for (label, path) in [
+        (SYSTEM_LOG, "System.evtx"),
+        (APPLICATION_LOG, "Application.evtx"),
+    ] {
         let mut parser = EvtxParser::from_path(label).expect("open evtx");
         println!("\n=== Raw EventData JSON — {path} (first 10 records) ===");
         let mut count = 0;
         for record in parser.records_json() {
-            if count >= 10 { break; }
+            if count >= 10 {
+                break;
+            }
             if let Ok(r) = record {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.data) {
                     let event = v.get("Event");
-                    let event_data = event
-                        .and_then(|e| e.get("EventData").or_else(|| e.get("UserData")));
+                    let event_data =
+                        event.and_then(|e| e.get("EventData").or_else(|| e.get("UserData")));
                     let event_id = event
                         .and_then(|e| e.get("System"))
                         .and_then(|s| s.get("EventID"))
-                        .and_then(|id| id.as_u64().or_else(|| {
-                            id.get("#text").and_then(|t| t.as_u64())
-                        }))
+                        .and_then(|id| {
+                            id.as_u64()
+                                .or_else(|| id.get("#text").and_then(|t| t.as_u64()))
+                        })
                         .unwrap_or(0);
                     println!(
                         "  EventID={event_id}  EventData={}",
@@ -173,13 +180,19 @@ fn dump_raw_eventdata_structure() {
     let mut parser = evtx::EvtxParser::from_path(APPLICATION_LOG).expect("open Application.evtx");
     let mut count = 0;
     for record in parser.records_json() {
-        if count >= 2 { break; }
+        if count >= 2 {
+            break;
+        }
         if let Ok(r) = record {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.data) {
-                let is_docker_11 = v.get("Event")
+                let is_docker_11 = v
+                    .get("Event")
                     .and_then(|e| e.get("System"))
                     .and_then(|s| s.get("EventID"))
-                    .and_then(|id| id.as_u64().or_else(|| id.get("#text").and_then(|t| t.as_u64())))
+                    .and_then(|id| {
+                        id.as_u64()
+                            .or_else(|| id.get("#text").and_then(|t| t.as_u64()))
+                    })
                     == Some(11)
                     && v.get("Event")
                         .and_then(|e| e.get("System"))
@@ -189,7 +202,10 @@ fn dump_raw_eventdata_structure() {
                         .and_then(|n| n.as_str())
                         == Some("docker");
                 if is_docker_11 {
-                    println!("  full JSON: {}", serde_json::to_string(&v).unwrap_or_default());
+                    println!(
+                        "  full JSON: {}",
+                        serde_json::to_string(&v).unwrap_or_default()
+                    );
                     count += 1;
                 }
             }
@@ -229,7 +245,10 @@ fn directory_input_processes_multiple_files() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
 
-    assert!(!lines.is_empty(), "expected output when given a logs directory");
+    assert!(
+        !lines.is_empty(),
+        "expected output when given a logs directory"
+    );
 
     let files: std::collections::HashSet<String> = lines
         .iter()

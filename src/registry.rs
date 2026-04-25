@@ -12,11 +12,9 @@ use crate::substitution;
 
 // ── Registry key paths ───────────────────────────────────────────────────────
 
-const WINEVT_PUBLISHERS: &str =
-    r"SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Publishers";
+const WINEVT_PUBLISHERS: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Publishers";
 
-const EVENTLOG_ROOT: &str =
-    r"SYSTEM\CurrentControlSet\Services\EventLog";
+const EVENTLOG_ROOT: &str = r"SYSTEM\CurrentControlSet\Services\EventLog";
 
 // ── RegistryProvider trait (enables unit-test mocking) ───────────────────────
 
@@ -44,7 +42,7 @@ impl RegistryProvider for WinRegistryProvider {
         subkey: &str,
         value: &str,
     ) -> Result<Option<String>, ResolveError> {
-        use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
+        use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
 
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
         match hklm.open_subkey(subkey) {
@@ -59,17 +57,14 @@ impl RegistryProvider for WinRegistryProvider {
     }
 
     fn enum_subkeys(&self, subkey: &str) -> Result<Vec<String>, ResolveError> {
-        use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
+        use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
 
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
         match hklm.open_subkey(subkey) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
             Err(e) => Err(ResolveError::Registry(e.to_string())),
             Ok(key) => {
-                let names = key
-                    .enum_keys()
-                    .filter_map(|r| r.ok())
-                    .collect();
+                let names = key.enum_keys().filter_map(|r| r.ok()).collect();
                 Ok(names)
             }
         }
@@ -91,8 +86,7 @@ pub fn expand_env(path: &str) -> PathBuf {
         )
         .replace(
             "%ProgramFiles%",
-            &std::env::var("ProgramFiles")
-                .unwrap_or_else(|_| r"C:\Program Files".to_string()),
+            &std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".to_string()),
         );
     PathBuf::from(expanded)
 }
@@ -107,7 +101,11 @@ pub fn try_mui_fallback(dll_path: &Path) -> Option<PathBuf> {
     let mut mui_name = filename.to_os_string();
     mui_name.push(".mui");
     let candidate = dir.join("en-US").join(&mui_name);
-    if candidate.exists() { Some(candidate) } else { None }
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 /// Resolve the DLL path for a provider using the manifest-based registry key.
@@ -135,9 +133,7 @@ fn resolve_classic(
     let channels = registry.enum_subkeys(EVENTLOG_ROOT)?;
     for channel in &channels {
         let subkey = format!(r"{EVENTLOG_ROOT}\{channel}\{provider_name}");
-        if let Some(raw) =
-            registry.get_local_machine_sz(&subkey, "EventMessageFile")?
-        {
+        if let Some(raw) = registry.get_local_machine_sz(&subkey, "EventMessageFile")? {
             let first = raw.split(';').next().unwrap_or(&raw).trim().to_string();
             return Ok(Some(expand_env(&first)));
         }
@@ -160,7 +156,9 @@ pub struct RegistryResolver {
 impl RegistryResolver {
     /// Create a resolver backed by the live Windows registry.
     pub fn new() -> Self {
-        Self { registry: Box::new(WinRegistryProvider) }
+        Self {
+            registry: Box::new(WinRegistryProvider),
+        }
     }
 
     /// Create a resolver with a custom registry provider (useful for testing).
@@ -180,33 +178,27 @@ impl MessageResolver for RegistryResolver {
     fn resolve(&self, record: &EvtxRecord) -> Result<Option<String>, ResolveError> {
         // 1. Locate the DLL.
         let dll_path_opt = if let Some(guid) = &record.provider_guid {
-            resolve_manifest(self.registry.as_ref(), guid)?
-                .or(resolve_classic(self.registry.as_ref(), &record.provider_name)
-                    .ok()
-                    .flatten())
+            resolve_manifest(self.registry.as_ref(), guid)?.or(resolve_classic(
+                self.registry.as_ref(),
+                &record.provider_name,
+            )
+            .ok()
+            .flatten())
         } else {
             resolve_classic(self.registry.as_ref(), &record.provider_name)?
         };
 
         let dll_path = match dll_path_opt {
-            None => {
-                return Err(ResolveError::ProviderNotFound(
-                    record.provider_name.clone(),
-                ))
-            }
+            None => return Err(ResolveError::ProviderNotFound(record.provider_name.clone())),
             Some(p) => p,
         };
 
         // 2. Apply MUI fallback if needed.
-        let effective_path = try_mui_fallback(&dll_path)
-            .unwrap_or(dll_path);
+        let effective_path = try_mui_fallback(&dll_path).unwrap_or(dll_path);
 
         // 3. Read DLL bytes.
         let pe_bytes = std::fs::read(&effective_path).map_err(|e| {
-            ResolveError::PeResource(format!(
-                "cannot read {}: {e}",
-                effective_path.display()
-            ))
+            ResolveError::PeResource(format!("cannot read {}: {e}", effective_path.display()))
         })?;
 
         // 4. Extract message template.
@@ -270,11 +262,7 @@ mod tests {
         }
 
         fn enum_subkeys(&self, subkey: &str) -> Result<Vec<String>, ResolveError> {
-            Ok(self
-                .subkeys
-                .get(subkey)
-                .cloned()
-                .unwrap_or_default())
+            Ok(self.subkeys.get(subkey).cloned().unwrap_or_default())
         }
     }
 
@@ -298,10 +286,7 @@ mod tests {
         );
 
         let result = resolve_manifest(&mock, guid).unwrap();
-        assert_eq!(
-            result,
-            Some(PathBuf::from(r"C:\Windows\System32\test.dll"))
-        );
+        assert_eq!(result, Some(PathBuf::from(r"C:\Windows\System32\test.dll")));
     }
 
     #[test]
@@ -314,8 +299,7 @@ mod tests {
             r"C:\Windows\System32\myevt.dll",
         );
 
-        let result =
-            resolve_classic(&mock, "MyProvider").unwrap();
+        let result = resolve_classic(&mock, "MyProvider").unwrap();
         assert_eq!(
             result,
             Some(PathBuf::from(r"C:\Windows\System32\myevt.dll"))

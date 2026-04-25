@@ -49,4 +49,3 @@ mod tests {
         let _: anyhow::Error = e.into();
     }
 }
-

@@ -23,8 +23,8 @@ pub struct EvtxRecord {
 /// # Errors
 /// Returns [`ResolveError::JsonParse`] if required fields are missing or malformed.
 pub fn parse_record(json: &str) -> Result<EvtxRecord, ResolveError> {
-    let root: Value = serde_json::from_str(json)
-        .map_err(|e| ResolveError::JsonParse(e.to_string()))?;
+    let root: Value =
+        serde_json::from_str(json).map_err(|e| ResolveError::JsonParse(e.to_string()))?;
 
     let system = root
         .get("Event")
@@ -54,10 +54,7 @@ pub fn parse_record(json: &str) -> Result<EvtxRecord, ResolveError> {
 
     let event_id: u32 = if let Some(n) = event_id_val.as_u64() {
         n as u32
-    } else if let Some(n) = event_id_val
-        .get("#text")
-        .and_then(Value::as_u64)
-    {
+    } else if let Some(n) = event_id_val.get("#text").and_then(Value::as_u64) {
         n as u32
     } else {
         return Err(ResolveError::JsonParse("invalid EventID".to_string()));
@@ -65,7 +62,12 @@ pub fn parse_record(json: &str) -> Result<EvtxRecord, ResolveError> {
 
     let params = extract_params(&root);
 
-    Ok(EvtxRecord { provider_name, provider_guid, event_id, params })
+    Ok(EvtxRecord {
+        provider_name,
+        provider_guid,
+        event_id,
+        params,
+    })
 }
 
 /// Extract substitution parameters from `Event.EventData` or `Event.UserData`.
@@ -167,7 +169,6 @@ fn scalar_to_param(v: &Value) -> String {
     }
 }
 
-
 /// Collect params from an `EventData.Data` value (named `{"#text":...}` objects or plain strings).
 fn collect_data_params(data: &Value) -> Vec<String> {
     match data {
@@ -182,26 +183,23 @@ fn collect_data_params(data: &Value) -> Vec<String> {
 ///
 /// # Errors
 /// Each item is a `Result`; individual record parse failures are surfaced per-item.
-pub fn records_from_path(
-    path: &Path,
-) -> impl Iterator<Item = Result<EvtxRecord, ResolveError>> {
+pub fn records_from_path(path: &Path) -> impl Iterator<Item = Result<EvtxRecord, ResolveError>> {
     // Build the parser eagerly; propagate open errors as the first item.
     let parser_result = EvtxParser::from_path(path).map_err(ResolveError::EvtxParse);
 
-    let records: Box<dyn Iterator<Item = Result<EvtxRecord, ResolveError>>> =
-        match parser_result {
-            Err(e) => Box::new(std::iter::once(Err(e))),
-            Ok(mut parser) => {
-                let items: Vec<_> = parser
-                    .records_json()
-                    .map(|r| {
-                        r.map_err(ResolveError::EvtxParse)
-                            .and_then(|rec| parse_record(&rec.data))
-                    })
-                    .collect();
-                Box::new(items.into_iter())
-            }
-        };
+    let records: Box<dyn Iterator<Item = Result<EvtxRecord, ResolveError>>> = match parser_result {
+        Err(e) => Box::new(std::iter::once(Err(e))),
+        Ok(mut parser) => {
+            let items: Vec<_> = parser
+                .records_json()
+                .map(|r| {
+                    r.map_err(ResolveError::EvtxParse)
+                        .and_then(|rec| parse_record(&rec.data))
+                })
+                .collect();
+            Box::new(items.into_iter())
+        }
+    };
 
     records
 }
@@ -303,7 +301,11 @@ mod tests {
     fn binary_only_eventdata_gives_empty_params() {
         let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":1},\"EventData\":{\"Binary\":\"DEADBEEF\"}}}";
         let rec = parse_record(json).unwrap();
-        assert!(rec.params.is_empty(), "expected empty params, got: {:?}", rec.params);
+        assert!(
+            rec.params.is_empty(),
+            "expected empty params, got: {:?}",
+            rec.params
+        );
     }
 
     /// When `Data` is null alongside a `Binary` key, the Binary must not bleed into params.
@@ -312,7 +314,11 @@ mod tests {
     fn data_null_with_binary_gives_empty_params() {
         let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":11},\"EventData\":{\"Data\":null,\"Binary\":\"DEADBEEF\"}}}";
         let rec = parse_record(json).unwrap();
-        assert!(rec.params.is_empty(), "expected empty params, got: {:?}", rec.params);
+        assert!(
+            rec.params.is_empty(),
+            "expected empty params, got: {:?}",
+            rec.params
+        );
     }
 
     #[test]
