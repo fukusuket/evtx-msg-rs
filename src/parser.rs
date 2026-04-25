@@ -72,13 +72,17 @@ pub fn parse_record(json: &str) -> Result<EvtxRecord, ResolveError> {
 ///
 /// evtx produces three distinct `EventData` shapes (plus `UserData`):
 ///
-/// 1. **`Data` array** – manifested events with `<Data Name="...">value</Data>`:
-///    `{"Data": [{"#attributes":{"Name":"p1"}, "#text":"v1"}, ...]}`
-///    or unnamed: `{"Data": ["v1", "v2"]}`
+/// 1. **`Data` key present** – whenever `EventData.Data` exists (even `null`) it is the
+///    authoritative source for substitution parameters and is returned directly.
+///    Named entries: `{"Data": [{"#attributes":{"Name":"p1"}, "#text":"v1"}, ...]}`
+///    Unnamed entries: `{"Data": ["v1", "v2"]}` or `{"Data": "v1"}`
+///    No strings logged: `{"Data": null}` → returns `[]`.
 ///
-/// 2. **Flat EventData** – classic/ETW events where parameters are direct children:
-///    `{"param1":"v1", "param2":"v2", "Binary":"..."}` (most System/Application events)
-///    `{"#attributes":{...}, "Field1":0, "Field2":0}` (#attributes holds metadata only)
+/// 2. **Flat EventData** – manifested / ETW events where named fields are direct children
+///    (no `Data` sub-key): `{"param1":"v1", "param2":"v2", ...}`
+///    Metadata-only keys (`#attributes`) and raw binary blobs (`Binary`) are excluded;
+///    `Binary` corresponds to `lpRawData` in `ReportEvent` and is **not** a FormatMessage
+///    substitution parameter.
 ///
 /// 3. **UserData** – Task Scheduler and similar providers:
 ///    `{"ElementName": {"#attributes":{...}, "Field1":"v1", "Field2":"v2"}}`
@@ -88,23 +92,29 @@ pub fn parse_record(json: &str) -> Result<EvtxRecord, ResolveError> {
 fn extract_params(root: &Value) -> Vec<String> {
     let event = root.get("Event");
 
-    // ── Shape 1: EventData.Data (array or single object/string) ─────────────
-    if let Some(data) = event.and_then(|e| e.get("EventData")).and_then(|ed| ed.get("Data")) {
-        let params = collect_data_params(data);
-        if !params.is_empty() {
-            return params;
+    // ── Shape 1: EventData.Data key present ─────────────────────────────────
+    // If the `Data` key exists at all (even null/empty), treat it as the sole
+    // source of substitution parameters.  Do NOT fall through to flat extraction
+    // when Data is null — other sibling keys (e.g. `Binary`) are not params.
+    if let Some(event_data) = event.and_then(|e| e.get("EventData")) {
+        if let Some(data) = event_data.get("Data") {
+            return collect_data_params(data);
         }
-    }
 
-    // ── Shape 2: Flat EventData ──────────────────────────────────────────────
-    if let Some(Value::Object(map)) = event.and_then(|e| e.get("EventData")) {
-        let params: Vec<String> = map
-            .iter()
-            .filter(|(k, _)| k.as_str() != "#attributes" && k.as_str() != "Data")
-            .map(|(_, v)| scalar_to_param(v))
-            .collect();
-        if !params.is_empty() {
-            return params;
+        // ── Shape 2: Flat EventData (no `Data` sub-key) ──────────────────────
+        // `Binary` = lpRawData from ReportEvent; excluded intentionally.
+        if let Value::Object(map) = event_data {
+            let params: Vec<String> = map
+                .iter()
+                .filter(|(k, _)| {
+                    let k = k.as_str();
+                    k != "#attributes" && k != "Binary"
+                })
+                .map(|(_, v)| scalar_to_param(v))
+                .collect();
+            if !params.is_empty() {
+                return params;
+            }
         }
     }
 
@@ -275,6 +285,34 @@ mod tests {
         let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":1},\"EventData\":{\"Data\":[{\"#attributes\":{\"Name\":\"x\"}}]}}}";
         let rec = parse_record(json).unwrap();
         assert_eq!(rec.params, vec![""]);
+    }
+
+    // ── Binary field exclusion ───────────────────────────────────────────────
+
+    /// `Binary` in EventData is raw lpRawData from ReportEvent — NOT a FormatMessage
+    /// substitution parameter.  It must not appear in `params`.
+    #[test]
+    fn binary_field_excluded_from_flat_params() {
+        let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":1},\"EventData\":{\"param1\":\"hello\",\"Binary\":\"DEADBEEF\"}}}";
+        let rec = parse_record(json).unwrap();
+        assert_eq!(rec.params, vec!["hello"]);
+    }
+
+    /// When EventData contains only a `Binary` key (no string params), params should be empty.
+    #[test]
+    fn binary_only_eventdata_gives_empty_params() {
+        let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":1},\"EventData\":{\"Binary\":\"DEADBEEF\"}}}";
+        let rec = parse_record(json).unwrap();
+        assert!(rec.params.is_empty(), "expected empty params, got: {:?}", rec.params);
+    }
+
+    /// When `Data` is null alongside a `Binary` key, the Binary must not bleed into params.
+    /// This covers the classic-event pattern: no string args + binary data only.
+    #[test]
+    fn data_null_with_binary_gives_empty_params() {
+        let json = "{\"Event\":{\"System\":{\"Provider\":{\"#attributes\":{\"Name\":\"P\"}},\"EventID\":11},\"EventData\":{\"Data\":null,\"Binary\":\"DEADBEEF\"}}}";
+        let rec = parse_record(json).unwrap();
+        assert!(rec.params.is_empty(), "expected empty params, got: {:?}", rec.params);
     }
 
     #[test]

@@ -109,12 +109,18 @@ fn print_summary(label: &str, lines: &[String], n: usize) {
 
     if !unresolved_placeholders.is_empty() {
         println!("  --- records with unresolved placeholders (first 3) ---");
+        println!("  NOTE: unresolved %N indicates the provider's message template");
+        println!("        references a parameter index that was not present in EventData.");
+        println!("        e.g. docker EventID 11 has template '[%2]' but only supplies");
+        println!("        one string param → %2 stays unresolved.  This is a provider");
+        println!("        behaviour, not a parser bug.");
         for v in unresolved_placeholders.iter().take(3) {
             let event_id = v["event_id"].as_u64().unwrap_or(0);
             let provider = v["provider"].as_str().unwrap_or("");
             let message = v["message"].as_str().unwrap_or("");
+            let params = v["params"].as_array().map(|a| a.len()).unwrap_or(0);
             let preview: String = message.chars().take(200).collect();
-            println!("  [{event_id}] {provider}\n    {preview}");
+            println!("  [{event_id}] {provider}  (extracted params: {params})\n    {preview}");
         }
     }
 
